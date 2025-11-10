@@ -246,9 +246,10 @@ class Conv2d(nn.Module):
         return out
 
 
-def evaluate_layer_accuracies(nets, pool, extra_pool, config, testloader, num_layers):
+def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testloader, num_layers):
     """
     Evaluate accuracy for each layer independently using a simple linear classifier.
+    Trains on training set features, evaluates on test set features.
 
     Returns:
         dict: Dictionary with keys 'layer_0', 'layer_1', etc. containing accuracies
@@ -258,13 +259,37 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, testloader, num_la
     for layer_idx in range(num_layers):
         print(f"  Evaluating Layer {layer_idx}...")
 
-        # Extract features for this layer
-        features_list = []
-        labels_list = []
-
+        # Set networks to eval mode
         with torch.no_grad():
-            for nets_layer in nets:
-                nets_layer.eval()
+            for net in nets:
+                net.eval()
+
+            # Extract TRAINING features
+            train_features_list = []
+            train_labels_list = []
+
+            for x, labels in trainloader:
+                x = x.to(config.device)
+
+                # Forward pass up to layer_idx
+                for i in range(layer_idx + 1):
+                    if nets[i].concat:
+                        x = stdnorm(x, dims=config.dims_in)
+                        x = torch.cat((x, x), dim=1)
+                    x = pool[i](nets[i].act(nets[i](x)))
+
+                # Apply extra pooling
+                out = extra_pool[layer_idx](x)
+                if config.stdnorm_out:
+                    out = stdnorm(out, dims=config.dims_out)
+                out = out.flatten(start_dim=1)
+
+                train_features_list.append(out.cpu())
+                train_labels_list.append(labels)
+
+            # Extract TEST features
+            test_features_list = []
+            test_labels_list = []
 
             for x, labels in testloader:
                 x = x.to(config.device)
@@ -274,42 +299,41 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, testloader, num_la
                     if nets[i].concat:
                         x = stdnorm(x, dims=config.dims_in)
                         x = torch.cat((x, x), dim=1)
-
                     x = pool[i](nets[i].act(nets[i](x)))
 
                 # Apply extra pooling
                 out = extra_pool[layer_idx](x)
-
                 if config.stdnorm_out:
                     out = stdnorm(out, dims=config.dims_out)
-
                 out = out.flatten(start_dim=1)
 
-                features_list.append(out.cpu())
-                labels_list.append(labels)
+                test_features_list.append(out.cpu())
+                test_labels_list.append(labels)
 
         # Concatenate all batches
-        features = torch.cat(features_list, dim=0)
-        labels = torch.cat(labels_list, dim=0)
+        train_features = torch.cat(train_features_list, dim=0)
+        train_labels = torch.cat(train_labels_list, dim=0)
+        test_features = torch.cat(test_features_list, dim=0)
+        test_labels = torch.cat(test_labels_list, dim=0)
 
-        # Train a simple linear classifier
-        if SKLEARN_AVAILABLE and features.shape[0] < 20000:  # Use sklearn for smaller datasets
+        # Train classifier on TRAIN features, evaluate on TEST features
+        if SKLEARN_AVAILABLE and train_features.shape[0] < 100000:
             from sklearn.linear_model import LogisticRegression
             clf = LogisticRegression(max_iter=500, random_state=42, n_jobs=-1)
-            clf.fit(features.numpy(), labels.numpy())
-            accuracy = clf.score(features.numpy(), labels.numpy())
+            clf.fit(train_features.numpy(), train_labels.numpy())
+            accuracy = clf.score(test_features.numpy(), test_labels.numpy())
         else:
             # Use PyTorch linear classifier
-            classifier = nn.Linear(features.shape[1], 10).to(config.device)
+            classifier = nn.Linear(train_features.shape[1], 10).to(config.device)
             optimizer = optim.Adam(classifier.parameters(), lr=0.001)
             criterion = nn.CrossEntropyLoss()
 
-            # Quick training (10 epochs)
-            dataset = torch.utils.data.TensorDataset(features, labels)
-            loader = DataLoader(dataset, batch_size=128, shuffle=True)
+            # Train on TRAIN features
+            train_dataset = torch.utils.data.TensorDataset(train_features, train_labels)
+            train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
             for _ in range(10):
-                for batch_feats, batch_labels in loader:
+                for batch_feats, batch_labels in train_loader:
                     batch_feats = batch_feats.to(config.device)
                     batch_labels = batch_labels.to(config.device)
 
@@ -319,14 +343,14 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, testloader, num_la
                     loss.backward()
                     optimizer.step()
 
-            # Evaluate
+            # Evaluate on TEST features
             classifier.eval()
             with torch.no_grad():
-                all_feats = features.to(config.device)
-                all_labels = labels.to(config.device)
-                outputs = classifier(all_feats)
+                test_feats = test_features.to(config.device)
+                test_lbls = test_labels.to(config.device)
+                outputs = classifier(test_feats)
                 _, predicted = torch.max(outputs, 1)
-                accuracy = (predicted == all_labels).float().mean().item()
+                accuracy = (predicted == test_lbls).float().mean().item()
 
         layer_accuracies[f'layer_{layer_idx}'] = accuracy * 100
         print(f"    Layer {layer_idx} Accuracy: {accuracy * 100:.2f}%")
@@ -476,7 +500,7 @@ def train(nets, device, optimizers, schedulers, threshold1, threshold2, dims_in,
             print(f"{'='*70}")
 
             layer_accs = evaluate_layer_accuracies(
-                nets, pool, extra_pool, config, testloader, NL
+                nets, pool, extra_pool, config, trainloader, testloader, NL
             )
 
             # Store results
