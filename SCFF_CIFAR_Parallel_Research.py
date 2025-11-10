@@ -799,7 +799,7 @@ def main(device_num, save_model, loaders, NL, lr, weight_decay, gamma, lamda, th
 
 
 def get_arguments():
-    parser = argparse.ArgumentParser(description="SCFF CIFAR-10 Parallel Training with Layer-wise Tracking")
+    parser = argparse.ArgumentParser(description="SCFF CIFAR-10 Parallel Training with Layer-wise Tracking", add_help=False)
 
     parser.add_argument("--lr", nargs='+', type=float, default=[0.02, 0.001, 0.0004], help="Learning rate per layer")
     parser.add_argument("--gamma", nargs='+', type=float, default=[0.99, 0.9, 0.99], help="LR decay rate per layer")
