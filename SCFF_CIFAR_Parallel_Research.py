@@ -317,7 +317,8 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
         test_labels = torch.cat(test_labels_list, dim=0)
 
         # Train classifier on TRAIN features, evaluate on TEST features
-        if SKLEARN_AVAILABLE and train_features.shape[0] < 100000:
+        # Use PyTorch (GPU) for faster evaluation on large datasets
+        if SKLEARN_AVAILABLE and train_features.shape[0] < 1000:
             from sklearn.linear_model import LogisticRegression
             clf = LogisticRegression(max_iter=500, random_state=42, n_jobs=-1)
             clf.fit(train_features.numpy(), train_labels.numpy())
