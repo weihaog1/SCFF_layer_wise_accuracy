@@ -254,9 +254,11 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
     Returns:
         dict: Dictionary with keys 'layer_0', 'layer_1', etc. containing accuracies
     """
+    import time
     layer_accuracies = {}
 
     for layer_idx in range(num_layers):
+        layer_start_time = time.time()
         print(f"  Evaluating Layer {layer_idx}...")
 
         # Set networks to eval mode
@@ -265,10 +267,11 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
                 net.eval()
 
             # Extract TRAINING features
+            print(f"    Extracting training features...")
             train_features_list = []
             train_labels_list = []
 
-            for x, labels in trainloader:
+            for x, labels in tqdm(trainloader, desc=f"    Train features", leave=False):
                 x = x.to(config.device)
 
                 # Forward pass up to layer_idx
@@ -288,10 +291,11 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
                 train_labels_list.append(labels)
 
             # Extract TEST features
+            print(f"    Extracting test features...")
             test_features_list = []
             test_labels_list = []
 
-            for x, labels in testloader:
+            for x, labels in tqdm(testloader, desc=f"    Test features", leave=False):
                 x = x.to(config.device)
 
                 # Forward pass up to layer_idx
@@ -325,6 +329,7 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
             accuracy = clf.score(test_features.numpy(), test_labels.numpy())
         else:
             # Use PyTorch linear classifier
+            print(f"    Training linear classifier on GPU...")
             classifier = nn.Linear(train_features.shape[1], 10).to(config.device)
             optimizer = optim.Adam(classifier.parameters(), lr=0.001)
             criterion = nn.CrossEntropyLoss()
@@ -333,7 +338,7 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
             train_dataset = torch.utils.data.TensorDataset(train_features, train_labels)
             train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
-            for _ in range(10):
+            for epoch in range(10):
                 for batch_feats, batch_labels in train_loader:
                     batch_feats = batch_feats.to(config.device)
                     batch_labels = batch_labels.to(config.device)
@@ -354,7 +359,8 @@ def evaluate_layer_accuracies(nets, pool, extra_pool, config, trainloader, testl
                 accuracy = (predicted == test_lbls).float().mean().item()
 
         layer_accuracies[f'layer_{layer_idx}'] = accuracy * 100
-        print(f"    Layer {layer_idx} Accuracy: {accuracy * 100:.2f}%")
+        layer_time = time.time() - layer_start_time
+        print(f"    Layer {layer_idx} Accuracy: {accuracy * 100:.2f}% (Time: {layer_time:.2f}s)")
 
     return layer_accuracies
 
